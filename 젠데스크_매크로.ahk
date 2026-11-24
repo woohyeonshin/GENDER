@@ -15,6 +15,10 @@
 ;      F1 좌클릭 / F2 우클릭 / F6 복사하기 / F7 붙여넣기 / F8 텍스트입력 / F9 전체선택 : 대상에 마우스 대고 누르기
 ;      F3 크롬 창 이동 : 이동할 크롬 창 위에 마우스 대고 누르기
 ;      F4 기다리기 : 1초로 바로 추가 (동작 더블클릭으로 시간 변경)
+;  - 입력칸(글 쓰는 칸·드롭다운)을 찍으면 '칸 위쪽 라벨 글자'를 기준으로 찾아요
+;      · 칸 자체에 이름이 안 붙어 있어도 돼요 (라벨 글자 + 그 바로 아래 칸)
+;      · 동작 목록에는 '라벨 (아래 칸)' 으로 보여요 · 좌표로 찾지 않아요
+;      · 같은 라벨이 화면에 여러 개면 몇 번째 것인지도 같이 기억해요
 ;  - 동작을 고른 뒤 Delete 키 : 그 동작 삭제
 ;  - 복사 / 붙여넣기 / 복제 (매크로 목록·동작 순서 둘 다)
 ;      Ctrl+C 복사 · Ctrl+V 붙여넣기(고른 줄 바로 아래에) · Ctrl+D 복제 · 우클릭 메뉴로도 가능
@@ -35,8 +39,8 @@
 ;  데이터는 같은 폴더의 macros.txt에 저장됨
 ; ============================================================
 
-global CFG := A_ScriptDir "\\macros.txt"
-global Macros := []            ; 각 매크로: {name, hk, cat, steps: [{action, p1, p2, p3, p4, p5, p6(메모), p7(추출 옵션)}]}
+global CFG := A_ScriptDir "\macros.txt"
+global Macros := []            ; 각 매크로: {name, hk, cat, steps: [{action, p1, p2, p3, p4, p5, p6(메모), p7(추출 옵션 / 화면 대상 찾기 옵션)}]}
 global Cats := []              ; 분류(상위 카테고리) 이름 목록 (만든 순서대로)
 global CatCollapsed := Map()   ; 접힌 분류 이름 → true (화면에서만 쓰고 저장하지 않음)
 global RowMap := []            ; 매크로 목록 줄 번호 → {kind:"cat", name} 또는 {kind:"macro", idx}
@@ -243,6 +247,7 @@ BuildGui() {
     MainGui.AddText(Format("x10 y{} w775 cGray", yc + 52)
         , "· 대상에 마우스를 대고 누르면 바로 추가:  F1 좌클릭 · F2 우클릭 · F6 복사하기 · F7 붙여넣기 · F8 텍스트입력`n"
         . "· F9 전체선택 (칸을 누르고 Ctrl+A) · F3 크롬 창 이동 (크롬 창 위에서) · F4 기다리기 1초`n"
+        . "· 글 쓰는 칸은 '칸 위쪽 라벨 글자 + 그 아래 칸'으로 기억해요 (칸에 이름이 없어도 돼요)`n"
         . "· [+ 키보드 키]: 아무 키나(Ctrl·Shift·Alt 조합 포함) 직접 눌러서 등록 → 커서가 있는 곳에 보내요`n"
         . "· [+ 텍스트 추출]: 시작어·마침어로 화면 글을 찾아 복사 (시작어 뒤 첫 숫자~마침어 앞만 꺼내기 · 쉼표 빼기 가능)`n"
         . "· 동작을 더블클릭하면 동작 종류(클릭·복사·붙여넣기 등끼리)·대상 이름·내용·메모를 한 창에서 수정`n"
@@ -415,25 +420,28 @@ Short(t) {
     return StrLen(t) > 25 ? SubStr(t, 1, 25) "…" : t
 }
 
+; 화면 대상 이름 (라벨 기준으로 찾는 칸이면 '(아래 칸)'을 붙여서 보여 줌)
+TName(s) => s.p1 . (ElemOpt(s).by = "label" ? " (아래 칸)" : "")
+
 StepDesc(s) {
     if (s.action = "wait")
         return s.p1 "ms (" Round(s.p1 / 1000, 1) "초)"
     if (s.action = "copy")
-        return s.p1 " → 클립보드"
+        return TName(s) " → 클립보드"
     if (s.action = "paste") {
         if (P(s, "p4") = "text")
-            return s.p1 " ← 글: " Short(P(s, "p5"))
-        return s.p1 " ← 클립보드"
+            return TName(s) " ← 글: " Short(P(s, "p5"))
+        return TName(s) " ← 클립보드"
     }
     if (s.action = "type")
-        return s.p1 " ← " (P(s, "p4") = "clear" ? "[지우고] " : "") Short(P(s, "p5"))
+        return TName(s) " ← " (P(s, "p4") = "clear" ? "[지우고] " : "") Short(P(s, "p5"))
     if (s.action = "selectall")
-        return s.p1 " (Ctrl+A)"
+        return TName(s) " (Ctrl+A)"
     if (s.action = "key")
         return KeyPretty(s.p1)
     if (s.action = "extract")
         return ExtractDesc(s)
-    return s.p1
+    return HasVal(ELEM_ACTIONS, s.action) ? TName(s) : s.p1
 }
 
 ; 동작에 그 칸이 없으면 빈 값 (예전에 만든 동작 호환용)
@@ -945,7 +953,7 @@ ExportMacros(*) {
 
     DoExport(list, *) {
         MainGui.Opt("+OwnDialogs")
-        def := A_ScriptDir "\\매크로_내보내기_" FormatTime(, "yyyyMMdd_HHmm") ".txt"
+        def := A_ScriptDir "\매크로_내보내기_" FormatTime(, "yyyyMMdd_HHmm") ".txt"
         SetEdit(true)
         path := FileSelect("S16", def, "매크로 내보내기 - 저장할 곳 고르기", "매크로 파일 (*.txt)")
         SetEdit(false)
@@ -998,7 +1006,7 @@ ImportMacros(*) {
             if (ans != "Yes")
                 return
             if FileExist(CFG) {
-                backup := A_ScriptDir "\\macros_백업_" FormatTime(, "yyyyMMdd_HHmmss") ".txt"
+                backup := A_ScriptDir "\macros_백업_" FormatTime(, "yyyyMMdd_HHmmss") ".txt"
                 try FileCopy(CFG, backup)
                 catch
                     backup := ""
@@ -1203,6 +1211,8 @@ HowTo(action) {
 }
 
 ; ---- 좌클릭 / 우클릭 / 복사하기 / 붙여넣기 / 텍스트입력 / 전체선택: 마우스 아래 대상 ----
+;  글 쓰는 칸·드롭다운은 '위쪽 라벨 글자 + 그 아래 칸'으로 등록 (p1=라벨, p7="by=label;n=몇번째")
+;  그 밖의 버튼·링크는 예전처럼 이름으로 등록
 AddElementUnderMouse(action, mi) {
     CoordMode("Mouse", "Screen")
     MouseGetPos(&x, &y, &win)
@@ -1210,28 +1220,52 @@ AddElementUnderMouse(action, mi) {
         ShowTip("매크로 창 말고, 누를 대상 위에 마우스를 대고 눌러 주세요.")
         return
     }
-    el := 0
-    try el := FindTarget(UIA.ElementFromPoint(x, y), action = "copy")
+    raw := 0
+    try raw := UIA.ElementFromPoint(x, y)
+
+    el := 0, nm := "", tp := "", opt := "", inp := 0
+    ; ① 입력칸이면 위쪽 라벨 글자를 기준으로 등록 (칸에 이름이 안 붙어 있어도 돼요)
+    try {
+        inp := FindInput(raw)
+        if inp {
+            info := LabelAnchor(inp, win)
+            if info {
+                el := inp, nm := info.label, tp := inp.Type, opt := "by=label;n=" info.n
+            }
+        }
+    }
+    ; ② 아니면 예전처럼 칸·버튼 이름으로
     if !el {
-        ShowTip("이 위치는 이름이 없어서 등록할 수 없어요.`n조금 옆에 마우스를 대고 다시 눌러 보세요.", 2500)
-        return
+        inpName := ""
+        if inp
+            try inpName := inp.Name
+        if (inp && inpName = "") {
+            ShowTip("이 칸은 이름도, 위쪽 라벨 글자도 못 찾았어요.`n라벨이 칸 바로 위에 글자로 보이는지 확인해 주세요.", 3000)
+            return
+        }
+        try el := FindTarget(raw, action = "copy")
+        if !el {
+            ShowTip("이 위치는 이름이 없어서 등록할 수 없어요.`n조금 옆에 마우스를 대고 다시 눌러 보세요.", 2500)
+            return
+        }
+        nm := el.Name, tp := el.Type
     }
     exe := "chrome.exe"
     try exe := WinGetProcessName("ahk_id " win)
-    nm := el.Name, tp := el.Type
+    shown := nm . (opt != "" ? " (아래 칸)" : "")
     if (action = "paste") {
-        AskPaste(mi, nm, tp, exe)    ; 무엇을 붙여넣을지 고르는 창
+        AskPaste(mi, nm, tp, exe, opt)    ; 무엇을 붙여넣을지 고르는 창
         return
     }
     if (action = "type") {
         ; 넣을 글을 적는 창
-        TypeDialog(nm, "", 0, (t, c) => (
-            AddStep(mi, {action: "type", p1: nm, p2: tp, p3: exe, p4: c ? "clear" : "", p5: t}),
-            ShowTip("추가됨: 텍스트입력 → " nm)))
+        TypeDialog(shown, "", 0, (t, c) => (
+            AddStep(mi, {action: "type", p1: nm, p2: tp, p3: exe, p4: c ? "clear" : "", p5: t, p7: opt}),
+            ShowTip("추가됨: 텍스트입력 → " shown)))
         return
     }
-    AddStep(mi, {action: action, p1: nm, p2: tp, p3: exe, p4: "", p5: ""})
-    ShowTip("추가됨: " ACTION_NAME[action] " → " nm)
+    AddStep(mi, {action: action, p1: nm, p2: tp, p3: exe, p4: "", p5: "", p7: opt})
+    ShowTip("추가됨: " ACTION_NAME[action] " → " shown)
 }
 
 ; ---- 크롬 창 이동: 마우스 아래 크롬 창 ----
@@ -1254,11 +1288,12 @@ AddWindowUnderMouse(mi) {
 }
 
 ; ---- 붙여넣기: 클립보드 또는 직접 적은 글 ----
-AskPaste(mi, name, type, exe) {
-    PasteDialog(name, false, "", (useText, t) => (
+AskPaste(mi, name, type, exe, opt := "") {
+    shown := name . (opt != "" ? " (아래 칸)" : "")
+    PasteDialog(shown, false, "", (useText, t) => (
         AddStep(mi, {action: "paste", p1: name, p2: type, p3: exe
-            , p4: useText ? "text" : "clip", p5: useText ? t : ""}),
-        ShowTip("추가됨: 붙여넣기 → " name)))
+            , p4: useText ? "text" : "clip", p5: useText ? t : "", p7: opt}),
+        ShowTip("추가됨: 붙여넣기 → " shown)))
 }
 
 ; 붙여넣을 내용 고르는 창 (추가할 때 / 수정할 때 같이 씀)
@@ -1903,6 +1938,163 @@ FindTarget(el, allowText := false) {
     return 0
 }
 
+; ============================================================
+;  입력칸 찾기: 칸 위쪽 '라벨 글자'를 기준으로 (좌표 안 씀)
+;  - 화면 구조가 [라벨 글자] 바로 아래 [입력칸] 이라서 칸 자체에는 이름이 없을 때 쓰는 방식
+;  - 등록할 때: 칸 앞(위)쪽에서 가장 가까운 글자(Text)를 라벨로 정함
+;  - 실행할 때: 그 라벨 글자를 찾고, 같은 덩어리 안에서 라벨 '다음에 나오는 첫 입력칸'을 잡음
+;  - 같은 라벨이 여러 개면 등록할 때 몇 번째였는지(n)를 기억해서 같은 순서의 것을 잡음
+;  - 라벨을 못 찾으면 예전처럼 칸 이름으로 등록 (이름도 없으면 등록 불가)
+; ============================================================
+
+; 입력칸 종류: Edit(글 쓰는 칸) / ComboBox(드롭다운)
+IsInputType(t) => (t = 50004 || t = 50003)
+
+; 마우스 아래 요소에서 입력칸 찾기 (칸 안쪽을 눌렀어도 가장 바깥 입력칸을 돌려줌)
+FindInput(el) {
+    best := 0
+    Loop 4 {
+        if !el
+            break
+        t := 0
+        try t := el.Type
+        if IsInputType(t)
+            best := el
+        else if best
+            break
+        try el := el.Parent
+        catch
+            break
+    }
+    return best
+}
+
+; 라벨로 쓸 만한 글인지 (비었거나 * : 같은 기호뿐이거나 너무 긴 글은 제외)
+IsLabelText(n) {
+    s := Trim(n)
+    return (s != "" && StrLen(s) <= 80 && !RegExMatch(s, "^[\s*:：.()\[\]\-・·•]+$"))
+}
+
+; 요소 목록 안에서 같은 요소가 몇 번째인지 (없으면 0)
+IndexInList(list, el) {
+    id := ""
+    try id := el.RuntimeId
+    if (id = "")
+        return 0
+    for i, x in list {
+        rid := ""
+        try rid := x.RuntimeId
+        if (rid = id)
+            return i
+    }
+    return 0
+}
+
+; 어떤 덩어리 안의 모든 하위 요소를 화면 구조(트리) 순서대로. 너무 크면 빈 목록
+NearbyElements(el) {
+    all := []
+    try all := el.FindAll(UIA.TrueCondition)
+    return (all.Length > 600) ? [] : all
+}
+
+; 입력칸 바로 앞(위)에 있는 라벨 글자 찾기
+;  칸의 부모 → 조부모… 로 올라가며(최대 3단계), 같은 덩어리 안에서 칸 앞쪽의 가장 가까운 글자(Text)를 돌려줌
+;  글자보다 먼저 다른 입력칸이 나오면 그건 다른 칸의 라벨이라서 포기("")
+FindLabelFor(inp) {
+    el := inp
+    Loop 3 {
+        try el := el.Parent
+        catch
+            return ""
+        all := NearbyElements(el)
+        pos := IndexInList(all, inp)
+        if !pos
+            continue
+        i := pos - 1
+        while (i >= 1) {
+            x := all[i]
+            t := 0, n := ""
+            try t := x.Type
+            try n := x.Name
+            if IsInputType(t)
+                return ""
+            if (t = 50020 && IsLabelText(n))
+                return n
+            i--
+        }
+    }
+    return ""
+}
+
+; 라벨 글자 다음에 나오는 첫 입력칸 찾기 (같은 덩어리 안에서, 최대 3단계 위까지)
+NextInputAfter(L) {
+    el := L
+    Loop 3 {
+        try el := el.Parent
+        catch
+            return 0
+        all := NearbyElements(el)
+        pos := IndexInList(all, L)
+        if !pos
+            continue
+        i := pos + 1
+        while (i <= all.Length) {
+            x := all[i]
+            t := 0
+            try t := x.Type
+            if IsInputType(t)
+                return x
+            i++
+        }
+    }
+    return 0
+}
+
+; 화면에서 그 라벨 글자의 '아래 칸'들을 화면 순서대로 모두 찾기 (같은 칸이 겹치면 한 번만)
+LabelInputs(root, lbl) {
+    out := [], seen := Map()
+    labels := []
+    try labels := root.FindElements({Type: "Text", Name: lbl})
+    for L in labels {
+        inp := NextInputAfter(L)
+        if !inp
+            continue
+        id := ""
+        try id := inp.RuntimeId
+        if (id = "" || seen.Has(id))
+            continue
+        seen[id] := true
+        out.Push(inp)
+    }
+    return out
+}
+
+; 등록할 때: 이 칸의 라벨을 정하고, 그 라벨로 다시 찾았을 때 같은 칸이 나오는지 확인
+; 돌려주는 값: {label, n(같은 라벨 중 몇 번째)} 또는 0
+LabelAnchor(inp, win) {
+    lbl := FindLabelFor(inp)
+    if (lbl = "")
+        return 0
+    root := UIA.ElementFromHandle(win)
+    n := IndexInList(LabelInputs(root, lbl), inp)
+    return n ? {label: lbl, n: n} : 0
+}
+
+; 화면 대상 동작의 찾기 옵션 (p7: "by=label;n=2")
+ElemOpt(s) {
+    o := {by: "", n: 1}
+    for part in StrSplit(P(s, "p7"), ";") {
+        kv := StrSplit(part, "=", , 2)
+        if (kv.Length = 2) {
+            if (kv[1] = "by")
+                o.by := kv[2]
+            else if (kv[1] = "n" && IsInteger(kv[2]) && kv[2] >= 1)
+                o.n := Integer(kv[2])
+        }
+    }
+    return o
+}
+
 ; ---- 크롬 창 이동 (버튼: 목록에서 고르기) ----
 AddWindowStep(*) {
     MainGui.Opt("+OwnDialogs")
@@ -2056,8 +2248,11 @@ EditStep(si) {
 
     EditTarget(*) {
         dlg.Opt("+OwnDialogs")
-        ib := InputBox("화면에서 찾을 대상의 이름이에요.`n버튼·칸 이름이 조금 바뀌었을 때 고쳐 주세요.  (정확히 같아야 찾아요)"
-            , "대상 이름", "w380 h150", t.p1)
+        byLbl := (ElemOpt(t).by = "label")
+        msg := byLbl
+            ? "칸 위에 보이는 라벨 글자예요. (이 글자 바로 아래 칸을 찾아요)`n라벨 글자가 조금 바뀌었을 때 고쳐 주세요.  (정확히 같아야 찾아요)"
+            : "화면에서 찾을 대상의 이름이에요.`n버튼·칸 이름이 조금 바뀌었을 때 고쳐 주세요.  (정확히 같아야 찾아요)"
+        ib := InputBox(msg, byLbl ? "라벨 글자" : "대상 이름", "w380 h150", t.p1)
         if (ib.Result = "OK" && Trim(ib.Value) != "")
             t.p1 := Trim(ib.Value)
         Upd()
@@ -2080,10 +2275,10 @@ EditStep(si) {
                 ExtractDialog(t, (r) => (t.p1 := r.p1, t.p2 := r.p2, t.p3 := r.p3
                     , t.p4 := r.p4, t.p5 := r.p5, t.p7 := r.p7, Upd()), dlg)
             case "type":
-                TypeDialog(t.p1, t.p5, t.p4 = "clear", (x, c) => (
+                TypeDialog(TName(t), t.p5, t.p4 = "clear", (x, c) => (
                     t.p4 := c ? "clear" : "", t.p5 := x, Upd()), dlg)
             case "paste":
-                PasteDialog(t.p1, t.p4 = "text", t.p5, (u, x) => (
+                PasteDialog(TName(t), t.p4 = "text", t.p5, (u, x) => (
                     t.p4 := u ? "text" : "clip", t.p5 := u ? x : "", Upd()), dlg)
         }
         Upd()
@@ -2262,9 +2457,22 @@ ReClick(prev, hwnd) {
         ClickElement(el, hwnd, prev.action)
 }
 
+; 동작이 가리키는 화면 요소 찾기
+;  · 라벨 기준(p7에 by=label): 라벨 글자 다음에 나오는 입력칸을 n번째로 잡음 (좌표 안 씀)
+;  · 그 외: 종류 + 이름으로 찾음
 FindStepElement(s, hwnd) {
     el := 0
-    try el := UIA.ElementFromHandle(hwnd).FindElement({Type: Integer(s.p2), Name: s.p1})
+    try {
+        root := UIA.ElementFromHandle(hwnd)
+        o := ElemOpt(s)
+        if (o.by = "label") {
+            list := LabelInputs(root, s.p1)
+            if (list.Length >= o.n)
+                el := list[o.n]
+        } else {
+            el := root.FindElement({Type: Integer(s.p2), Name: s.p1})
+        }
+    }
     return el
 }
 
@@ -2489,7 +2697,7 @@ RegisterAllHotkeys() {
 ;  SETTING 줄: 설정값 (retry·memo)
 ;  CAT 줄: 분류 이름 (분류만 있고 매크로가 없어도 저장됨)
 ;  MACRO 줄: MACRO  이름  단축키  분류  ← 탭으로 구분 (분류 칸은 예전 파일에 없으면 분류 없음)
-;  STEP 줄: STEP  동작  p1  p2  p3  p4  p5  p6(메모)  p7(추출 옵션)  ← 탭으로 구분
+;  STEP 줄: STEP  동작  p1  p2  p3  p4  p5  p6(메모)  p7(추출 옵션 / 화면 대상 찾기 옵션)  ← 탭으로 구분
 ;  예전 파일(메모 칸·분류 칸·p7 칸 없음)도 그대로 읽힘
 ;  내보내기 파일·복사한 클립보드 글도 같은 형식 (SETTING 줄만 없음)
 ;  MACRO 줄 없이 STEP 줄만 있으면 (동작만 복사한 경우) 따로 모아 둠
