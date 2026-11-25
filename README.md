@@ -1,1 +1,3 @@
 # GENDER
+
+$c=@("$env:ProgramFiles\Google\Chrome\Application\chrome.exe","${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe","$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")|?{Test-Path $_}|select -First 1; $s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\CDP Chrome.lnk'); $s.TargetPath=$c; $s.Arguments="--remote-debugging-port=9222 --user-data-dir=`"$env:USERPROFILE\ChromeCDP`""; $s.Save(); "OK: $c"
