@@ -4,3 +4,11 @@ localhost:9222/json/version
 
 
 $ExecutionContext.SessionState.LanguageMode
+
+
+Test-Path "$env:TEMP\zdcdp\ready.txt"
+
+
+Get-Content "$env:TEMP\zdcdp\server.log" -Tail 20
+
+$t=(Invoke-RestMethod http://127.0.0.1:9222/json)|?{$_.type -eq 'page'}|select -First 1; $t.title; $ws=New-Object System.Net.WebSockets.ClientWebSocket; $ws.ConnectAsync([Uri]$t.webSocketDebuggerUrl,[Threading.CancellationToken]::None).Wait(); $ws.State
