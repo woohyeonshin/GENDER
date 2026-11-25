@@ -12,10 +12,14 @@
 ;      · [분류 지정]: 고른 매크로를 분류에 넣기 (목록에 없는 이름을 적으면 새 분류가 만들어져요)
 ;  - 오른쪽: 선택한 매크로의 동작 순서 (위에서부터 차례로 실행)
 ;  - 동작 바로 추가 (왼쪽에서 매크로를 선택해 둔 상태에서)
-;      F1 좌클릭 / F2 우클릭 / F6 복사하기 / F7 붙여넣기 / F8 텍스트입력 / F9 전체선택 : 대상에 마우스 대고 누르기
+;      F1 좌클릭 / F2 우클릭 / F6 복사하기 / F7 붙여넣기 / F8 텍스트입력 / F9 전체선택 / F10 드롭다운 선택(CDP만) : 대상에 마우스 대고 누르기
 ;      F3 크롬 창 이동 : 이동할 크롬 창 위에 마우스 대고 누르기
 ;      F4 기다리기 : 1초로 바로 추가 (동작 더블클릭으로 시간 변경)
-;  - 입력칸(글 쓰는 칸·드롭다운)을 찍으면 '칸 위쪽 라벨 글자'를 기준으로 찾아요
+;  - [CDP 방식] 창 아래 'CDP 방식 사용'이 켜져 있으면 칸·드롭다운·버튼·글 읽기를 UIA 대신 크롬 디버그 포트(9222)로 다뤄요
+;      · 같은 폴더의 cdp_server.ps1 이 필요해요 (프로그램이 숨겨서 알아서 켜요 · PowerShell 5.1)
+;      · 크롬을 [디버그 크롬 열기]로 열고, 그 크롬에서 젠데스크에 로그인해야 해요
+;      · 칸은 '라벨 글자 + 같은 라벨 중 몇 번째'로 찾아요 (좌표·UIA 안 씀) · 끄면 예전 UIA 방식 그대로
+;  - [UIA 방식] 입력칸(글 쓰는 칸·드롭다운)을 찍으면 '칸 위쪽 라벨 글자'를 기준으로 찾아요
 ;      · 칸 자체에 이름이 안 붙어 있어도 돼요 (라벨 글자 + 그 바로 아래 칸)
 ;      · 동작 목록에는 '라벨 (아래 칸)' 으로 보여요 · 좌표로 찾지 않아요
 ;      · 같은 라벨이 화면에 여러 개면 몇 번째 것인지도 같이 기억해요
@@ -49,6 +53,10 @@ global MainGui := 0, MacroLV := 0, StepLV := 0
 global Running := false, StopFlag := false
 global RetryChk := 0, RetryOn := false
 global MemoChk := 0, MemoAsk := true   ; 동작 추가할 때 메모 묻기
+global CdpChk := 0, UseCDP := true      ; CDP(크롬 디버그 포트) 방식으로 화면 대상을 다룰지 (끄면 예전 UIA 방식)
+global CdpPort := 9222                  ; 디버그 크롬 포트 (cdp_start_chrome.bat 과 같아야 함)
+global CdpDir := A_Temp "\zdcdp"        ; CDP 도우미(cdp_server.ps1)와 주고받는 임시 폴더
+global CdpPid := 0, CdpReqId := 0, CdpLastErr := ""
 global EditMode := false       ; 입력 대화상자가 열려 있으면 true → 단축키 비활성화
 global StepDlgOpen := false    ; 동작 수정 창이 열려 있으면 true → 단축키 비활성화
 global CapHook := 0            ; 키 직접 누르기용 InputHook
@@ -57,14 +65,14 @@ global EXTRACT_DEFAULT := "between;from=digit;fromN=1;to=end;toN=;comma=keep"   
 global CLICKABLE := [50000, 50002, 50003, 50004, 50005, 50007, 50011, 50013, 50019, 50024]
 global ACTION_NAME := Map("left", "좌클릭", "right", "우클릭", "key", "키보드"
     , "window", "크롬 창 이동", "wait", "기다리기", "copy", "복사하기", "paste", "붙여넣기"
-    , "type", "텍스트입력", "selectall", "전체선택", "extract", "텍스트 추출")
+    , "type", "텍스트입력", "selectall", "전체선택", "extract", "텍스트 추출", "select", "드롭다운 선택")
 
 ; 화면 대상(이름으로 찾는 요소)을 쓰는 동작 → 서로 종류를 바꿀 수 있음
-global ELEM_ACTIONS := ["left", "right", "copy", "paste", "type", "selectall"]
+global ELEM_ACTIONS := ["left", "right", "copy", "paste", "type", "selectall", "select"]
 
 ; 동작 추가용 F키 (매크로 단축키로는 못 씀)
-global ADD_KEYS := Map("F1", "left", "F2", "right", "F3", "window", "F4", "wait", "F6", "copy", "F7", "paste", "F8", "type", "F9", "selectall")
-global KEY_OF := Map("left", "F1", "right", "F2", "window", "F3", "wait", "F4", "copy", "F6", "paste", "F7", "type", "F8", "selectall", "F9")
+global ADD_KEYS := Map("F1", "left", "F2", "right", "F3", "window", "F4", "wait", "F6", "copy", "F7", "paste", "F8", "type", "F9", "selectall", "F10", "select")
+global KEY_OF := Map("left", "F1", "right", "F2", "window", "F3", "wait", "F4", "copy", "F6", "paste", "F7", "type", "F8", "selectall", "F9", "select", "F10")
 
 ; 키보드 키 추가 창의 빠른 선택 목록
 global KEY_LIST := ["{Enter}", "{Tab}", "{Esc}", "{Space}", "{Backspace}", "{Delete}"
@@ -177,12 +185,14 @@ RegisterAllHotkeys()
 RegisterAddKeys()
 RegisterDeleteKey()
 RegisterCopyKeys()
+OnExit(CdpStop)
+SetTimer(CdpInit, -300)    ; 창이 뜬 뒤에 CDP 도우미를 조용히 켬
 
 ; ============================================================
 ;  메인 창
 ; ============================================================
 BuildGui() {
-    global MainGui, MacroLV, StepLV, RetryChk, MemoChk
+    global MainGui, MacroLV, StepLV, RetryChk, MemoChk, CdpChk
     MainGui := Gui("+AlwaysOnTop", "젠데스크 매크로")
     MainGui.SetFont("s10", "맑은 고딕")
     MainGui.MarginX := 10, MainGui.MarginY := 10
@@ -232,6 +242,8 @@ BuildGui() {
     Btn(sx, y4, 176, "+ 키보드 키", AddKeyStep)
     Btn(sx + 182, y4, 176, "+ 텍스트 추출", AddExtractStep)
     Btn(sx + 364, y4, 176, "선택 동작 테스트", TestStep)
+    Btn(sx, y5, 176, "+ 드롭다운 선택 (F10)", (*) => HowTo("select"))
+    Btn(sx + 182, y5, 176, "디버그 크롬 열기", CdpLaunchChrome)
 
     yc := y5 + 42
     RetryChk := MainGui.AddCheckbox(Format("x10 y{} w775", yc)
@@ -244,9 +256,15 @@ BuildGui() {
     MemoChk.Value := MemoAsk
     MemoChk.OnEvent("Click", (*) => SetMemoAsk(MemoChk.Value))
 
-    MainGui.AddText(Format("x10 y{} w775 cGray", yc + 52)
+    CdpChk := MainGui.AddCheckbox(Format("x10 y{} w775", yc + 48)
+        , "CDP 방식 사용 (권장: 디버그 크롬 + cdp_server.ps1 로 칸·드롭다운·글 읽기를 다뤄요 · 끄면 예전 UIA 방식)")
+    CdpChk.Value := UseCDP
+    CdpChk.OnEvent("Click", (*) => SetCdp(CdpChk.Value))
+
+    MainGui.AddText(Format("x10 y{} w775 cGray", yc + 78)
         , "· 대상에 마우스를 대고 누르면 바로 추가:  F1 좌클릭 · F2 우클릭 · F6 복사하기 · F7 붙여넣기 · F8 텍스트입력`n"
-        . "· F9 전체선택 (칸을 누르고 Ctrl+A) · F3 크롬 창 이동 (크롬 창 위에서) · F4 기다리기 1초`n"
+        . "· F9 전체선택 (칸을 누르고 Ctrl+A) · F10 드롭다운 선택 (CDP 방식만) · F3 크롬 창 이동 · F4 기다리기 1초`n"
+        . "· CDP 방식: 디버그 크롬(위 [디버그 크롬 열기])에서 젠데스크에 로그인해 둬야 해요. 칸은 '라벨 글자 + 몇 번째'로 찾아요`n"
         . "· 글 쓰는 칸은 '칸 위쪽 라벨 글자 + 그 아래 칸'으로 기억해요 (칸에 이름이 없어도 돼요)`n"
         . "· [+ 키보드 키]: 아무 키나(Ctrl·Shift·Alt 조합 포함) 직접 눌러서 등록 → 커서가 있는 곳에 보내요`n"
         . "· [+ 텍스트 추출]: 시작어·마침어로 화면 글을 찾아 복사 (시작어 뒤 첫 숫자~마침어 앞만 꺼내기 · 쉼표 빼기 가능)`n"
@@ -421,7 +439,14 @@ Short(t) {
 }
 
 ; 화면 대상 이름 (라벨 기준으로 찾는 칸이면 '(아래 칸)'을 붙여서 보여 줌)
-TName(s) => s.p1 . (ElemOpt(s).by = "label" ? " (아래 칸)" : "")
+;  by=label  : UIA 방식 (라벨 글자 + 그 아래 칸)   by=clabel : CDP 방식 라벨 칸
+;  by=ctestid: CDP 방식 data-test-id             by=ctext  : CDP 방식 보이는 글자
+TName(s) => ShownName(s.p1, P(s, "p7"))
+
+ShownName(nm, opt) {
+    by := ElemOpt({p7: opt}).by
+    return nm . (by = "label" ? " (아래 칸)" : by = "clabel" ? " (칸)" : by = "ctestid" ? " (ID)" : by = "caria" ? " (이름)" : "")
+}
 
 StepDesc(s) {
     if (s.action = "wait")
@@ -437,6 +462,8 @@ StepDesc(s) {
         return TName(s) " ← " (P(s, "p4") = "clear" ? "[지우고] " : "") Short(P(s, "p5"))
     if (s.action = "selectall")
         return TName(s) " (Ctrl+A)"
+    if (s.action = "select")
+        return TName(s) " → 선택: " Short(P(s, "p5"))
     if (s.action = "key")
         return KeyPretty(s.p1)
     if (s.action = "extract")
@@ -568,7 +595,7 @@ HotkeyOK(key, mi) {
     if (key = "")
         return true
     if IsReserved(key) {
-        MsgBox("F1·F2·F3·F4·F6·F7·F8·F9·Esc는 동작 추가용 키라서 고를 수 없어요.")
+        MsgBox("F1·F2·F3·F4·F6·F7·F8·F9·F10·Esc는 동작 추가용 키라서 고를 수 없어요.")
         return false
     }
     for i, m in Macros {
@@ -1220,6 +1247,14 @@ AddElementUnderMouse(action, mi) {
         ShowTip("매크로 창 말고, 누를 대상 위에 마우스를 대고 눌러 주세요.")
         return
     }
+    if UseCDP {
+        AddElementCdp(action, mi)
+        return
+    }
+    if (action = "select") {
+        ShowTip("드롭다운 선택은 CDP 방식에서만 쓸 수 있어요. (아래 'CDP 방식 사용'을 켜 주세요)", 3500)
+        return
+    }
     raw := 0
     try raw := UIA.ElementFromPoint(x, y)
 
@@ -1240,19 +1275,21 @@ AddElementUnderMouse(action, mi) {
         if inp
             try inpName := inp.Name
         if (inp && inpName = "") {
-            ShowTip("이 칸은 이름도, 위쪽 라벨 글자도 못 찾았어요.`n라벨이 칸 바로 위에 글자로 보이는지 확인해 주세요.", 3000)
+            A_Clipboard := "화면 구조 진단 (" action ")`n" DumpChain(raw)
+            ShowTip("이 칸은 이름도, 위쪽 라벨 글자도 못 찾았어요.`n(구조 정보를 클립보드에 복사했어요 · 대화에 붙여넣어 주세요)", 4000)
             return
         }
         try el := FindTarget(raw, action = "copy")
         if !el {
-            ShowTip("이 위치는 이름이 없어서 등록할 수 없어요.`n조금 옆에 마우스를 대고 다시 눌러 보세요.", 2500)
+            A_Clipboard := "화면 구조 진단 (" action ")`n" DumpChain(raw)
+            ShowTip("이 위치는 이름이 없어서 등록할 수 없어요.`n조금 옆에 마우스를 대고 다시 눌러 보세요.`n(구조 정보를 클립보드에 복사했어요 · 대화에 붙여넣어 주세요)", 4000)
             return
         }
         nm := el.Name, tp := el.Type
     }
     exe := "chrome.exe"
     try exe := WinGetProcessName("ahk_id " win)
-    shown := nm . (opt != "" ? " (아래 칸)" : "")
+    shown := ShownName(nm, opt)
     if (action = "paste") {
         AskPaste(mi, nm, tp, exe, opt)    ; 무엇을 붙여넣을지 고르는 창
         return
@@ -1266,6 +1303,53 @@ AddElementUnderMouse(action, mi) {
     }
     AddStep(mi, {action: action, p1: nm, p2: tp, p3: exe, p4: "", p5: "", p7: opt})
     ShowTip("추가됨: " ACTION_NAME[action] " → " shown)
+}
+
+; ---- CDP 방식: 마우스 아래 대상을 도우미(cdp_server.ps1)가 알려 줌 (좌표 안 씀) ----
+;  도우미가 크롬 탭마다 '마우스가 마지막으로 올라간 요소'를 기억해 두고, F키를 누르면 그걸 설명해 줘요
+;  돌려주는 값: by(clabel/ctestid/ctext), 이름, 몇 번째, 태그
+AddElementCdp(action, mi) {
+    r := CdpCall("pick", 0, 8000)
+    if (!r.ok || r.f.Length < 4) {
+        why := (r.err = "NO_HOVER") ? "마우스가 올라간 대상을 못 찾았어요.`n크롬 안의 대상 위에 마우스를 잠깐 움직였다가 다시 눌러 보세요."
+            : (SubStr(r.err, 1, 9) = "NO_TARGET") ? "이 위치는 이름·라벨·ID가 없어서 등록할 수 없어요.`n조금 옆(칸 안쪽이나 라벨 근처)에 대고 다시 눌러 보세요.`n(대상 정보를 클립보드에 복사했어요 · 대화에 붙여넣어 주세요)"
+            : "CDP로 대상을 못 잡았어요: " r.err
+        if (SubStr(r.err, 1, 9) = "NO_TARGET")
+            A_Clipboard := "CDP 대상 진단 (" action ")`n" r.err
+        ShowTip(why, 4500)
+        return
+    }
+    by := r.f[1], nm := r.f[2], n := r.f[3], tp := r.f[4]
+    opt := "by=" by ";n=" n
+    exe := "chrome.exe"
+    shown := ShownName(nm, opt)
+    if (action = "paste") {
+        AskPaste(mi, nm, tp, exe, opt)
+        return
+    }
+    if (action = "type") {
+        TypeDialog(shown, "", 0, (t, c) => (
+            AddStep(mi, {action: "type", p1: nm, p2: tp, p3: exe, p4: c ? "clear" : "", p5: t, p7: opt}),
+            ShowTip("추가됨: 텍스트입력 → " shown)))
+        return
+    }
+    if (action = "select") {
+        MainGui.Opt("+OwnDialogs")
+        SetEdit(true)
+        ib := InputBox("고를 항목의 글자를 적어 주세요. (화면에 보이는 글자와 같게 · 일부만 적어도 돼요)`n칸: " shown
+            , "드롭다운 선택", "w400 h170")
+        SetEdit(false)
+        if (ib.Result != "OK" || Trim(ib.Value) = "")
+            return
+        AddStep(mi, {action: "select", p1: nm, p2: tp, p3: exe, p4: "", p5: Trim(ib.Value), p7: opt})
+        ShowTip("추가됨: 드롭다운 선택 → " shown " : " Trim(ib.Value))
+        return
+    }
+    AddStep(mi, {action: action, p1: nm, p2: tp, p3: exe, p4: "", p5: "", p7: opt})
+    msg := "추가됨: " ACTION_NAME[action] " → " shown
+    if (action = "copy" && by = "ctext")
+        msg .= "`n(고정된 글자로 찾는 거라 내용이 바뀌면 못 찾아요 · 바뀌는 글은 [+ 텍스트 추출]이 좋아요)"
+    ShowTip(msg, action = "copy" && by = "ctext" ? 4000 : 1500)
 }
 
 ; ---- 크롬 창 이동: 마우스 아래 크롬 창 ----
@@ -1289,7 +1373,7 @@ AddWindowUnderMouse(mi) {
 
 ; ---- 붙여넣기: 클립보드 또는 직접 적은 글 ----
 AskPaste(mi, name, type, exe, opt := "") {
-    shown := name . (opt != "" ? " (아래 칸)" : "")
+    shown := ShownName(name, opt)
     PasteDialog(shown, false, "", (useText, t) => (
         AddStep(mi, {action: "paste", p1: name, p2: type, p3: exe
             , p4: useText ? "text" : "clip", p5: useText ? t : "", p7: opt}),
@@ -1576,6 +1660,10 @@ ExtractOnce(s, hwnd) {
 
 ; 크롬 창에 보이는 글 전부 읽어 오기 (페이지 글 + 입력칸에 들어 있는 글)
 GetScreenText(hwnd) {
+    if UseCDP {                       ; CDP 방식: 현재 탭의 글을 통째로 (화면 그대로의 줄바꿈)
+        r := CdpCall("text", 0, 15000)
+        return (r.ok && r.f.Length) ? NormText(r.f[1]) : ""
+    }
     root := 0
     try root := UIA.ElementFromHandle(hwnd)
     if !root
@@ -1950,15 +2038,44 @@ FindTarget(el, allowText := false) {
 ; 입력칸 종류: Edit(글 쓰는 칸) / ComboBox(드롭다운)
 IsInputType(t) => (t = 50004 || t = 50003)
 
+; 요소가 입력칸인지: Edit / ComboBox, 또는 접근성 역할이 textbox·combobox·searchbox
+IsInputEl(el) {
+    t := 0
+    try t := el.Type
+    if IsInputType(t)
+        return true
+    ar := ""
+    try ar := el.AriaRole
+    return (ar = "textbox" || ar = "combobox" || ar = "searchbox")
+}
+
+; 진단용: 마우스 아래 요소와 그 위 부모들의 종류·이름·역할 목록
+DumpChain(el) {
+    out := ""
+    Loop 8 {
+        if !el
+            break
+        t := 0, n := "", ar := "", cn := "", tn := ""
+        try t := el.Type
+        try n := el.Name
+        try ar := el.AriaRole
+        try cn := el.ClassName
+        try tn := UIA.Type[t]
+        out .= A_Index ") " tn " (" t ")  name=[" SubStr(n, 1, 30) "]  aria=[" ar "]  class=[" SubStr(cn, 1, 30) "]`n"
+        try el := el.Parent
+        catch
+            break
+    }
+    return out
+}
+
 ; 마우스 아래 요소에서 입력칸 찾기 (칸 안쪽을 눌렀어도 가장 바깥 입력칸을 돌려줌)
 FindInput(el) {
     best := 0
     Loop 4 {
         if !el
             break
-        t := 0
-        try t := el.Type
-        if IsInputType(t)
+        if IsInputEl(el)
             best := el
         else if best
             break
@@ -2016,7 +2133,7 @@ FindLabelFor(inp) {
             t := 0, n := ""
             try t := x.Type
             try n := x.Name
-            if IsInputType(t)
+            if IsInputEl(x)
                 return ""
             if (t = 50020 && IsLabelText(n))
                 return n
@@ -2040,9 +2157,7 @@ NextInputAfter(L) {
         i := pos + 1
         while (i <= all.Length) {
             x := all[i]
-            t := 0
-            try t := x.Type
-            if IsInputType(t)
+            if IsInputEl(x)
                 return x
             i++
         }
@@ -2102,10 +2217,21 @@ AddWindowStep(*) {
     if !mi
         return
     titles := []
-    for h in WinGetList("ahk_exe chrome.exe") {
-        t := WinGetTitle(h)
-        if (t != "")
-            titles.Push(RegExReplace(t, " - (Google Chrome|Chrome)$"))
+    if UseCDP {                       ; CDP 방식이면 열려 있는 탭 제목을 도우미에게서 받아옴
+        r := CdpCall("tabs", 0, 4000)
+        if r.ok {
+            for t in r.f {
+                if (t != "")
+                    titles.Push(t)
+            }
+        }
+    }
+    if !titles.Length {
+        for h in WinGetList("ahk_exe chrome.exe") {
+            t := WinGetTitle(h)
+            if (t != "")
+                titles.Push(RegExReplace(t, " - (Google Chrome|Chrome)$"))
+        }
     }
     dlg := Gui("+AlwaysOnTop +Owner" MainGui.Hwnd, "크롬 창 이동 추가")
     dlg.SetFont("s10", "맑은 고딕")
@@ -2221,9 +2347,10 @@ EditStep(si) {
 
     ; 내용 수정 버튼은 고칠 내용이 있는 동작에서만 켜기
     UpdButtons() {
-        btnContent.Enabled := !isElem || t.action = "paste" || t.action = "type"
+        btnContent.Enabled := !isElem || t.action = "paste" || t.action = "type" || t.action = "select"
         btnContent.Text := (t.action = "paste") ? "붙여넣을 내용 수정…"
             : (t.action = "type") ? "입력할 글 수정…"
+            : (t.action = "select") ? "고를 항목 수정…"
             : isElem ? "(고칠 내용 없음)" : "내용 수정…"
     }
 
@@ -2233,22 +2360,22 @@ EditStep(si) {
         if (na = old)
             return
         ; 붙여넣기 글 ↔ 텍스트입력 글은 서로 넘겨줌
-        txt := (old = "type" || (old = "paste" && t.p4 = "text")) ? t.p5 : ""
+        txt := (old = "type" || old = "select" || (old = "paste" && t.p4 = "text")) ? t.p5 : ""
         t.action := na
-        if (na = "type")
+        if (na = "type" || na = "select")
             t.p4 := "", t.p5 := txt
         else if (na = "paste")
             t.p4 := (txt != "") ? "text" : "clip", t.p5 := txt
         else
             t.p4 := "", t.p5 := ""
         Upd()
-        if (na = "type" && t.p5 = "")      ; 텍스트입력은 넣을 글이 꼭 있어야 함
+        if ((na = "type" || na = "select") && t.p5 = "")      ; 텍스트입력·드롭다운 선택은 글이 꼭 있어야 함
             EditContent()
     }
 
     EditTarget(*) {
         dlg.Opt("+OwnDialogs")
-        byLbl := (ElemOpt(t).by = "label")
+        byLbl := (ElemOpt(t).by = "label" || ElemOpt(t).by = "clabel")
         msg := byLbl
             ? "칸 위에 보이는 라벨 글자예요. (이 글자 바로 아래 칸을 찾아요)`n라벨 글자가 조금 바뀌었을 때 고쳐 주세요.  (정확히 같아야 찾아요)"
             : "화면에서 찾을 대상의 이름이에요.`n버튼·칸 이름이 조금 바뀌었을 때 고쳐 주세요.  (정확히 같아야 찾아요)"
@@ -2280,11 +2407,21 @@ EditStep(si) {
             case "paste":
                 PasteDialog(TName(t), t.p4 = "text", t.p5, (u, x) => (
                     t.p4 := u ? "text" : "clip", t.p5 := u ? x : "", Upd()), dlg)
+            case "select":
+                ib := InputBox("고를 항목의 글자를 적어 주세요. (화면에 보이는 글자와 같게 · 일부만 적어도 돼요)`n칸: " TName(t)
+                    , "드롭다운 선택", "w400 h170", t.p5)
+                if (ib.Result = "OK" && Trim(ib.Value) != "")
+                    t.p5 := Trim(ib.Value)
         }
         Upd()
     }
 
     DoSave(*) {
+        if (t.action = "select" && t.p5 = "") {
+            dlg.Opt("+OwnDialogs")
+            MsgBox("드롭다운 선택은 고를 항목이 필요해요. [고를 항목 수정…]에서 적어 주세요.")
+            return
+        }
         if (t.action = "type" && t.p5 = "") {
             dlg.Opt("+OwnDialogs")
             MsgBox("텍스트입력은 넣을 글이 필요해요. [입력할 글 수정…]에서 적어 주세요.")
@@ -2392,6 +2529,8 @@ RunMacro(mi, *) {
     Running := true, StopFlag := false
     Hotkey("$Esc", StopRun, "On")
     hwnd := WinExist("ahk_exe chrome.exe")
+    if UseCDP
+        CdpCall("reset", 0, 5000)      ; 지금 보고 있는 탭에서 시작하도록 (이전에 기억한 탭을 잊음)
     ok := true
     prevClick := 0
     for si, s in m.steps {
@@ -2439,7 +2578,8 @@ RunStepUntil(s, &hwnd, prevClick, title) {
         if TryStep(s, &hwnd)
             return true
         waited := (A_TickCount - start) // 1000
-        ToolTip(title "`n대기 중: " StepLabel(s) "  (" waited "초)`n멈추려면 Esc")
+        ToolTip(title "`n대기 중: " StepLabel(s) "  (" waited "초)"
+            . ((UseCDP && CdpLastErr != "") ? "`nCDP: " CdpLastErr : "") "`n멈추려면 Esc")
         if (RetryOn && IsObject(prevClick) && A_TickCount - lastRetry >= 5000) {
             lastRetry := A_TickCount
             ReClick(prevClick, hwnd)
@@ -2450,6 +2590,11 @@ RunStepUntil(s, &hwnd, prevClick, title) {
 
 ; 앞 클릭 대상이 화면에 그대로 있으면(=화면이 안 바뀜) 한 번 더 누른다
 ReClick(prev, hwnd) {
+    if UseCDP {
+        h := hwnd
+        CdpTryStep(prev, &h)
+        return
+    }
     if (!hwnd || !WinExist(hwnd))
         return
     el := FindStepElement(prev, hwnd)
@@ -2503,9 +2648,25 @@ SetMemoAsk(v) {
     SaveAll()
 }
 
+SetCdp(v) {
+    global UseCDP
+    UseCDP := v
+    SaveAll()
+    if v
+        CdpInit()
+}
+
 ; 동작 하나를 한 번 시도. 성공하면 true, 아직 안 되면 false
 ; hwnd는 '지금 작업 중인 크롬 창'으로, 창 이동 동작이 바꿔 줌
 TryStep(s, &hwnd) {
+    ; CDP 방식: 창 이동·화면 대상 동작은 도우미(cdp_server.ps1)에게 시킴 (키보드·기다리기·텍스트 추출은 그대로)
+    if (UseCDP && (s.action = "window" || HasVal(ELEM_ACTIONS, s.action)))
+        return CdpTryStep(s, &hwnd)
+    if (s.action = "select") {
+        ShowTip("드롭다운 선택은 CDP 방식에서만 돼요. 'CDP 방식 사용'을 켜 주세요.", 3000)
+        StopRun()
+        return false
+    }
     switch s.action {
         case "wait":
             endTime := A_TickCount + Integer(s.p1)
@@ -2666,6 +2827,226 @@ ShowTip(text, ms := 1500) {
 }
 
 ; ============================================================
+;  CDP 방식 (크롬 디버그 포트)
+;  - 화면 대상(칸·드롭다운·버튼)과 글 읽기를 UIA 대신 크롬 디버그 포트(9222)로 다뤄요
+;  - 같은 폴더의 cdp_server.ps1 (PowerShell 5.1, 설치 불필요)을 숨겨서 한 번만 켜 두고
+;    임시 폴더의 파일로 요청/응답을 주고받아요 (매번 새로 켜지 않아서 빨라요)
+;      요청  in.txt  : id=.. / cmd=.. / key=값 ... (값은 Enc 로 줄바꿈·탭을 가림)
+;      응답  out.txt : id <탭> OK|ERR <탭> 값1 <탭> 값2 ...  (값은 Enc)
+;  - 디버그 크롬(cdp_start_chrome.bat 또는 [디버그 크롬 열기])에서 젠데스크에 로그인해 있어야 해요
+;  - by 값: clabel(라벨 글자 + n번째 칸) / ctestid(data-test-id) / ctext(보이는 글자)
+;           label(예전 UIA 방식으로 만든 동작)은 clabel 처럼, 값이 없으면 글자→라벨 순으로 찾아요
+; ============================================================
+
+; 디버그 포트가 열려 있는지 (크롬이 디버그 모드로 떠 있는지)
+CdpPortUp() {
+    try {
+        http := ComObject("WinHttp.WinHttpRequest.5.1")
+        http.SetProxy(1)                        ; 회사 프록시를 거치지 않고 바로
+        http.SetTimeouts(1000, 1000, 1000, 1000)
+        http.Open("GET", "http://127.0.0.1:" CdpPort "/json/version", false)
+        http.Send()
+        return (http.Status = 200)
+    }
+    return false
+}
+
+; 디버그 모드로 크롬 열기 (cdp_start_chrome.bat 과 같은 일)
+CdpLaunchChrome(*) {
+    MainGui.Opt("+OwnDialogs")
+    if CdpPortUp() {
+        MsgBox("디버그 크롬이 이미 열려 있어요. 그 크롬에서 젠데스크에 로그인해 쓰세요.")
+        return
+    }
+    prof := EnvGet("USERPROFILE") "\cdp-profile"
+    try {
+        Run('chrome.exe --remote-debugging-port=' CdpPort ' --user-data-dir="' prof '"')
+    } catch {
+        MsgBox("크롬을 열지 못했어요. 같은 폴더의 cdp_start_chrome.bat 을 실행해 주세요.")
+        return
+    }
+    ShowTip("디버그 크롬을 열었어요.`n그 크롬에서 젠데스크에 로그인해 주세요.", 3500)
+}
+
+; 시작할 때 / CDP 방식을 켤 때: 디버그 크롬 상태 알려 주고 도우미 켜기
+CdpInit() {
+    if !UseCDP
+        return
+    if !CdpPortUp()
+        ShowTip("디버그 크롬이 안 열려 있어요.`n[디버그 크롬 열기]를 눌러 열고 젠데스크에 로그인해 주세요.", 5000)
+    if !CdpEnsureServer()
+        ShowTip("CDP 도우미(cdp_server.ps1)를 못 켰어요.`n" CdpLastErr, 6000)
+}
+
+; 프로그램을 끌 때 도우미도 같이 끄기 (도우미도 부모가 사라지면 스스로 꺼짐)
+CdpStop(*) {
+    global CdpPid
+    if (CdpPid && ProcessExist(CdpPid))
+        try ProcessClose(CdpPid)
+}
+
+; 도우미가 떠 있고 준비됐는지 확인하고, 없으면 켜기
+CdpEnsureServer() {
+    global CdpPid, CdpLastErr
+    ready := CdpDir "\ready.txt"
+    if (CdpPid && ProcessExist(CdpPid) && FileExist(ready))
+        return true
+    ps1 := A_ScriptDir "\cdp_server.ps1"
+    if !FileExist(ps1) {
+        CdpLastErr := "cdp_server.ps1 파일이 없어요 (이 프로그램과 같은 폴더에 두세요)"
+        return false
+    }
+    try DirCreate(CdpDir)
+    if (!CdpPid || !ProcessExist(CdpPid)) {
+        for nm in ["ready.txt", "in.txt", "in.tmp", "out.txt", "out.tmp"]
+            try FileDelete(CdpDir "\" nm)
+        cmd := Format('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}" -Port {2} -IpcDir "{3}" -ParentPid {4}'
+            , ps1, CdpPort, CdpDir, ProcessExist())
+        pid := 0
+        try {
+            Run(cmd, A_ScriptDir, "Hide", &pid)
+        } catch as e {
+            CdpLastErr := "PowerShell을 못 켰어요: " e.Message
+            return false
+        }
+        CdpPid := pid
+    }
+    deadline := A_TickCount + 10000
+    while (A_TickCount < deadline) {
+        if FileExist(ready)
+            return true
+        if !ProcessExist(CdpPid) {
+            CdpLastErr := "PowerShell이 바로 꺼졌어요 (회사 보안 정책으로 막혔을 수 있어요)"
+            return false
+        }
+        Sleep(50)
+    }
+    CdpLastErr := "도우미가 10초 안에 준비되지 않았어요 (" CdpDir "\server.log 확인)"
+    return false
+}
+
+; 도우미에게 명령 하나 보내고 답 받기. 돌려주는 값: {ok, f: [값들], err}
+;  cmd  : ping / reset / tabs / window / pick / text / act
+;  args : Map("키", 값, ...) 또는 0
+CdpCall(cmd, args := 0, timeout := 20000) {
+    global CdpReqId, CdpLastErr
+    res := {ok: false, f: [], err: ""}
+    if !CdpEnsureServer() {
+        res.err := CdpLastErr
+        return res
+    }
+    CdpReqId++
+    id := A_TickCount "_" CdpReqId
+    inF := CdpDir "\in.txt", outF := CdpDir "\out.txt", tmpF := CdpDir "\in.tmp"
+    try FileDelete(outF)
+    txt := "id=" id "`ncmd=" cmd "`n"
+    if IsObject(args) {
+        for k, v in args
+            txt .= k "=" Enc(v) "`n"
+    }
+    try {
+        f := FileOpen(tmpF, "w", "UTF-8-RAW")
+        f.Write(txt)
+        f.Close()
+        FileMove(tmpF, inF, 1)
+    } catch as e {
+        res.err := "요청 파일을 못 썼어요: " e.Message
+        CdpLastErr := res.err
+        return res
+    }
+    deadline := A_TickCount + timeout
+    while (A_TickCount < deadline) {
+        if (Running && StopFlag) {
+            res.err := "중단"
+            return res
+        }
+        if FileExist(outF) {
+            raw := ""
+            try raw := FileRead(outF, "UTF-8")
+            line := ""
+            for ln in StrSplit(raw, "`n", "`r") {
+                line := ln
+                break
+            }
+            parts := StrSplit(line, "`t")
+            if (parts.Length >= 2 && parts[1] = id) {
+                res.ok := (parts[2] = "OK")
+                Loop parts.Length - 2
+                    res.f.Push(Dec(parts[A_Index + 2]))
+                if !res.ok
+                    res.err := res.f.Length ? res.f[1] : "ERR"
+                CdpLastErr := res.ok ? "" : res.err
+                return res
+            }
+        }
+        Sleep(20)
+    }
+    res.err := "도우미가 대답이 없어요 (" cmd ")"
+    CdpLastErr := res.err
+    return res
+}
+
+; 동작 하나를 한 번 시도 (CDP 방식). 성공하면 true, 아직 안 되면 false
+;  · 대상이 아직 화면에 없으면 false → 실행 쪽에서 나타날 때까지 계속 시도
+CdpTryStep(s, &hwnd) {
+    o := ElemOpt(s)
+    a := Map("by", o.by, "key", s.p1, "n", o.n)
+    switch s.action {
+        case "window":
+            r := CdpCall("window", Map("kw", s.p1))
+            if !r.ok
+                return false
+            title := r.f.Length ? r.f[1] : ""
+            if (title != "") {                       ; 키보드 동작이 올바른 창으로 가도록 그 크롬 창도 앞으로
+                SetTitleMatchMode(2)
+                h := WinExist(title " ahk_exe chrome.exe")
+                if h {
+                    hwnd := h
+                    try WinActivate(h)
+                }
+            }
+            return true
+        case "copy":
+            r := CdpCall("act", MapPlus(a, "do", "copy"))
+            if (!r.ok || !r.f.Length || Trim(r.f[1]) = "")     ; 내용이 아직 비어 있으면 채워질 때까지 기다림
+                return false
+            A_Clipboard := r.f[1]
+            return true
+        case "paste":
+            a["do"] := "paste"
+            a["text"] := (P(s, "p4") = "text") ? P(s, "p5") : ClipText()
+            return CdpCall("act", a).ok
+        case "type":
+            a["do"] := "type"
+            a["text"] := P(s, "p5")
+            a["clear"] := (P(s, "p4") = "clear") ? 1 : 0
+            return CdpCall("act", a).ok
+        case "selectall":
+            a["do"] := "selectall"
+            return CdpCall("act", a).ok
+        case "select":
+            a["do"] := "select"
+            a["option"] := P(s, "p5")
+            return CdpCall("act", a, 25000).ok
+        case "right":
+            a["do"] := "rclick"
+            return CdpCall("act", a).ok
+        default:      ; left
+            a["do"] := "click"
+            return CdpCall("act", a).ok
+    }
+}
+
+; Map 복사본에 키 하나 더 넣어서 돌려주기
+MapPlus(m, k, v) {
+    c := Map()
+    for kk, vv in m
+        c[kk] := vv
+    c[k] := v
+    return c
+}
+
+; ============================================================
 ;  단축키 등록
 ; ============================================================
 RegisterAllHotkeys() {
@@ -2753,7 +3134,7 @@ MacroLines(list, cats := []) {
 ;  steps: MACRO 줄 없이 들어 있는 동작들 (동작만 복사했을 때)
 ;  retry·memo는 SETTING 줄이 없으면 ""
 ParseMacroText(content) {
-    res := {macros: [], cats: [], steps: [], retry: "", memo: ""}
+    res := {macros: [], cats: [], steps: [], retry: "", memo: "", cdp: ""}
     content := LTrim(content, Chr(0xFEFF))
     cur := 0
     Loop Parse content, "`n", "`r" {
@@ -2767,6 +3148,8 @@ ParseMacroText(content) {
                 res.retry := (f[3] = "1")
             else if (f[2] = "memo")
                 res.memo := (f[3] = "1")
+            else if (f[2] = "cdp")
+                res.cdp := (f[3] = "1")
         } else if (f[1] = "CAT" && f.Length >= 2) {
             if (f[2] != "" && !HasVal(res.cats, f[2]))
                 res.cats.Push(f[2])
@@ -2787,6 +3170,7 @@ SaveAll() {
     txt := "; 젠데스크 매크로 데이터`n"
     txt .= "SETTING`tretry`t" (RetryOn ? 1 : 0) "`n"
     txt .= "SETTING`tmemo`t" (MemoAsk ? 1 : 0) "`n"
+    txt .= "SETTING`tcdp`t" (UseCDP ? 1 : 0) "`n"
     txt .= MacroLines(Macros, Cats)
     f := FileOpen(CFG, "w", "UTF-8")
     f.Write(txt)
@@ -2794,7 +3178,7 @@ SaveAll() {
 }
 
 LoadAll() {
-    global Macros, Cats, RetryOn, MemoAsk
+    global Macros, Cats, RetryOn, MemoAsk, UseCDP
     Macros := []
     Cats := []
     if !FileExist(CFG)
@@ -2809,4 +3193,6 @@ LoadAll() {
         RetryOn := d.retry
     if (d.memo != "")
         MemoAsk := d.memo
+    if (d.cdp != "")
+        UseCDP := d.cdp
 }
